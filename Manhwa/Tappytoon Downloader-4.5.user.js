@@ -156,7 +156,6 @@
 
     // --- FUNCIONES DE OBTENCIÓN DE CAPÍTULOS ---
 
-    // Método 1: API Directa
     async function fetchChaptersApi(comicId, locale) {
         const url = `https://api-global.tappytoon.com/comics/${comicId}/chapters?excludes=wait_until_free&filter=visits&includes=pagination,restricted&skipAgeRatingRestriction=true&limit=1000&locale=${locale}`;
         let token = "";
@@ -180,7 +179,6 @@
         throw new Error("Formato JSON de la API no reconocido.");
     }
 
-    // Método 2: Memoria Next.js
     function getChaptersFromNextData() {
         const nextDataStr = document.getElementById('__NEXT_DATA__')?.textContent;
         if (!nextDataStr) return null;
@@ -206,20 +204,16 @@
         return null;
     }
 
-    // Método 3: ESCANEO DOM (Basado en el HTML que proporcionaste)
     function getChaptersFromDOM() {
         const chapters = [];
-        // Busca todas las imágenes que pertenecen a los "episodios" en la lista HTML
         const imgs = document.querySelectorAll('img[src*="/episode/"]');
 
         imgs.forEach((img, index) => {
-            // Extrae el ID numérico de la URL (ej: /episode/705275058/ -> 705275058)
             const match = img.src.match(/\/episode\/(\d+)\//);
             if (match) {
                 const id = parseInt(match[1]);
-                let title = `Episode ${index + 1}`; // Título por defecto
+                let title = `Episode ${index + 1}`;
 
-                // Intenta buscar el texto real del episodio ("Episode 1", "Episode 2", etc.)
                 let parent = img.parentElement;
                 let attempts = 0;
                 while (parent && attempts < 6) {
@@ -237,7 +231,6 @@
             }
         });
 
-        // Limpiar duplicados si la página renderiza imágenes dobles
         const uniqueChapters = [];
         const seen = new Set();
         chapters.forEach(c => {
@@ -282,7 +275,6 @@
         }
     }
 
-    // --- MODO BATCH ---
     async function runBatch() {
         const btn = document.getElementById('ez-start-btn');
         const status = document.getElementById('ez-status');
@@ -305,7 +297,6 @@
             let chapters = null;
             const locale = window.location.pathname.split('/')[1] || 'en';
 
-            // Flujo de Supervivencia: Intentar 3 métodos distintos
             try {
                 if (!comicId) throw new Error("Sin Comic ID");
                 chapters = await fetchChaptersApi(comicId, locale);
@@ -325,7 +316,6 @@
                 throw new Error("No se pudo obtener la lista de capítulos con ningún método.");
             }
 
-            // Ordenamos la lista obtenida
             chapters.sort((a, b) => a.order - b.order);
 
             const targets = chapters.filter((c, i) => {
@@ -348,7 +338,7 @@
 
                 if (!baseUrl) {
                     console.warn(`[Tappytoon DL] Timeout en ${cap.title}. Probablemente no tienes acceso a él.`);
-                    continue; // En lugar de detener todo, saltamos los capítulos a los que no tengas acceso real
+                    continue;
                 }
 
                 const safeCapTitle = cap.title.replace(/[/\\?%*:|"<>]/g, '-');
