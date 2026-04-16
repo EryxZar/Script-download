@@ -8,7 +8,7 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 | :--- | :--- |
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
 | **🇨🇳 Manhua** | Kuaikan |
-| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin, Toptoon, Tappytoon |
+| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin, Toptoon, Tappytoon, Ridibook, Tapas |
 | **📖 Novelas** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
