@@ -6,6 +6,7 @@
 // @author       EryxZar
 // @match        *://tapas.io/series/*
 // @match        *://tapas.io/episode/*
+// @match        *://m.tapas.io/series/*
 // @require      https://unpkg.com/@zip.js/zip.js@2.7.60/dist/zip-full.min.js
 // @grant        GM_xmlhttpRequest
 // @connect      tapas.io
