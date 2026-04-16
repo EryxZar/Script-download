@@ -1,3 +1,49 @@
+- [English Version](#english-version)
+- [Versión en Español](#versión-en-español)
+
+---
+
+## English Version
+# Web Content Downloader - Tampermonkey Scripts
+
+This repository contains a collection of **UserScripts** optimized for the automation and downloading of content across various Manga, Manhua, Manhwa, and Novel reading portals.
+
+## 🚀 Supported Sites
+
+| Category | Platforms |
+| :--- | :--- |
+| **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
+| **🇨🇳 Manhua** | Kuaikan |
+| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin(kr,us,jp), Toptoon, Tappytoon, Ridibook, Tapas |
+| **📖 Novels** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
+
+---
+
+## 🛠️ Installation
+
+1. Make sure you have the [Tampermonkey](https://www.tampermonkey.net/) extension installed in your browser.
+2. Browse the folders in this repository.
+3. Click on the `.user.js` file of the script you want to install.
+4. Click the **"Raw"** button; Tampermonkey will automatically detect the script and prompt you to confirm the installation.
+
+## 📋 General Features
+* **Automated downloads:** Sequential capture of images and text.
+* **Reading optimization:** Interface adjustments to improve user experience.
+* **Multi-site support:** Specific scripts tailored to the structure of each platform.
+
+---
+
+## 👤 Author
+* **EryxZar** - *Development and maintenance.*
+
+---
+
+> [IMPORTANT!]
+> **Disclaimer:** These scripts have been created for personal backup and educational purposes. The use of these tools on external platforms is the sole responsibility of the user. Please respect the terms of service of each website.
+
+---
+
+## Versión en Español
 # Web Content Downloader - Tampermonkey Scripts
 
 Este repositorio contiene una colección de **UserScripts** optimizados para la automatización y descarga de contenido en diversos portales de lectura de Manga, Manhua, Manhwa y Novelas.
