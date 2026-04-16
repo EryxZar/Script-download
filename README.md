@@ -1,5 +1,5 @@
 <details>
-<summary><b>🇪🇸 Versión en Español (Haz clic para expandir)</b></summary>
+<summary><b>ES Versión en Español (Haz clic para expandir)</b></summary>
 
 # Web Content Downloader - Tampermonkey Scripts
 
@@ -41,7 +41,7 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 </details>
 
 <details>
-<summary><b>🇬🇧 English Version (Click to expand)</b></summary>
+<summary><b>EN English Version (Click to expand)</b></summary>
 
 # Web Content Downloader - Tampermonkey Scripts
 
