@@ -18,7 +18,6 @@
     let capturedChapterData = null;
     let isDownloading = false;
 
-    // --- CONFIGURACIÓN Y ESTILOS ---
     const style = document.createElement('style');
     style.innerHTML = `
         :root { --kakao-yellow: #FFCD00; --bg: #1a1a1a; --text: #efefef; --accent: #ffcd00; --border: #333; }
@@ -36,7 +35,6 @@
     `;
     document.head.appendChild(style);
 
-    // --- INTERCEPCIÓN DE DATOS (Lógica Kakao) ---
     function findKakaoImages(obj) {
         if (!obj || typeof obj !== 'object') return null;
         let searchObj = obj.data || obj;
@@ -85,7 +83,6 @@
         return response;
     };
 
-    // --- PROCESAMIENTO DE IMÁGENES (Lógica Stitch/Toptoon) ---
     async function fetchImage(url, retries = 3) {
         for (let i = 0; i < retries; i++) {
             try {
@@ -124,7 +121,6 @@
         await writer.add(`${String(count).padStart(3, '0')}.jpg`, new zip.BlobReader(mergedBlob));
     }
 
-    // --- UI Y FLUJO PRINCIPAL ---
     function createPanel() {
         if (document.getElementById('ez-panel')) return;
         const panel = document.createElement('div');
@@ -217,10 +213,8 @@
         }
     }
 
-    // Inicialización
     window.addEventListener('load', createPanel);
 
-    // Observer para cambios de URL (SPA)
     let lastUrl = location.href;
     new MutationObserver(() => {
         if (location.href !== lastUrl) {
