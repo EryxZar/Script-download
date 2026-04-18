@@ -9,9 +9,9 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 
 | Categoría | Plataformas |
 | :--- | :--- |
-| **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
+| **🇯🇵 Manga** | Bookwalker, Renta, Young Animal, |
 | **🇨🇳 Manhua** | Kuaikan |
-| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin(kr,us,jp), Toptoon, Tappytoon, Ridibook, Tapas |
+| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin(kr,us,jp), Toptoon, Tappytoon, Ridibook, Tapas, Mr.Blue |
 | **📖 Novelas** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
@@ -53,7 +53,7 @@ This repository contains a collection of **UserScripts** optimized for the autom
 | :--- | :--- |
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
 | **🇨🇳 Manhua** | Kuaikan |
-| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin(kr,us,jp), Toptoon, Tappytoon, Ridibook, Tapas |
+| **🇰🇷 Manhwa** | Bomtoon, Kakaopage, Lezhin(kr,us,jp), Toptoon, Tappytoon, Ridibook, Tapas, Mr.blue |
 | **📖 Novels** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
