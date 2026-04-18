@@ -3,7 +3,7 @@
 // @version      1.0
 // @description  Descargar novela web
 // @author       EryxZar
-// @match        *://page.kakao.com/*
+// @match        https://page.kakao.com/content/*/viewer/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // ==/UserScript==
