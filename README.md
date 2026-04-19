@@ -12,7 +12,7 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal, |
 | **🇨🇳 Manhua** | Kuaikan |
 | **🇰🇷 Manhwa** | Bomtoon, kakaPageManhwa |
-| **📖 Novelas** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
+| **📖 Novelas** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
 
@@ -54,7 +54,7 @@ This repository contains a collection of **UserScripts** optimized for the autom
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
 | **🇨🇳 Manhua** | Kuaikan |
 | **🇰🇷 Manhwa** | Bomtoon, kakaPageManhwa |
-| **📖 Novels** | Munpia, Novelpia, Ridibook, Kakaobook, Syosetu, NaverBook |
+| **📖 Novels** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
 
