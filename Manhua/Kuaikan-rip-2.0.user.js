@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Kuaikan-rip
-// @version      1.2
+// @version      2.0
 // @author       EryxZar
 // @match        https://www.kuaikanmanhua.com/webs/comic-next/*
 // @require      https://unpkg.com/@zip.js/zip.js@2.7.60/dist/zip-full.min.js
@@ -56,9 +56,15 @@
                 <label>Nombre del archivo:</label>
                 <input type="text" id="ez-filename">
             </div>
-            <div class="ez-field">
-                <label>Límite de alto (px):</label>
-                <input type="number" id="ez-h-limit" value="5000">
+            <div class="ez-field" style="display: flex; gap: 5px;">
+                <div style="flex: 1;">
+                    <label>Ancho (px):</label>
+                    <input type="number" id="ez-width" placeholder="Ancho">
+                </div>
+                <div style="flex: 1;">
+                    <label>Alto (px):</label>
+                    <input type="number" id="ez-h-limit" value="5000">
+                </div>
             </div>
             <button id="ez-main-btn" class="ez-btn">🚀 DESCARGAR</button>
             <div class="progress-bar" id="ez-progress-cont"><div class="progress-fill" id="ez-progress"></div></div>
@@ -69,19 +75,34 @@
         document.getElementById('ez-main-btn').onclick = startUnifiedProcess;
     }
 
+    function getMode(arr) {
+        if (arr.length === 0) return 0;
+        const map = {};
+        let maxCount = 0;
+        let mode = arr[0];
+        for (const val of arr) {
+            map[val] = (map[val] || 0) + 1;
+            if (map[val] > maxCount) {
+                maxCount = map[val];
+                mode = val;
+            }
+        }
+        return mode;
+    }
+
     async function startUnifiedProcess() {
         if (isProcessing) return;
 
         const status = document.getElementById('ez-status');
         const btn = document.getElementById('ez-main-btn');
         const hLimit = parseInt(document.getElementById('ez-h-limit').value) || 5000;
+        let targetWidth = parseInt(document.getElementById('ez-width').value) || 0;
         const fileName = document.getElementById('ez-filename').value || "Kuaikan-rip";
 
         status.innerText = "🔍 Buscando imágenes...";
         let urlList = [];
 
         try {
-            // --- FASE 1: ESCANEO ---
             const nuxt = unsafeWindow?.__NUXT__;
             if (nuxt && nuxt.data) {
                 for (let entry of nuxt.data) {
@@ -101,11 +122,10 @@
             urlList = [...new Set(urlList)];
 
             if (urlList.length === 0) {
-                status.innerText = "❌ No se hallaron imágenes.\nPrueba bajando un poco en la web.";
+                status.innerText = "❌ No se hallaron imágenes.";
                 return;
             }
 
-            // --- FASE 2: DESCARGA ---
             isProcessing = true;
             btn.disabled = true;
             document.getElementById('ez-progress-cont').style.display = "block";
@@ -114,57 +134,68 @@
             const blobs = new Array(urlList.length);
             let completed = 0;
 
-            const downloadTask = async (index) => {
-                try {
-                    const blob = await new Promise((res, rej) => {
-                        GM_xmlhttpRequest({
-                            method: "GET", url: urlList[index], responseType: "blob",
-                            headers: { "Referer": "https://www.kuaikanmanhua.com/" },
-                            onload: r => res(r.response), onerror: rej
-                        });
-                    });
-                    blobs[index] = blob;
-                } catch (e) { console.error(`Error en bloque ${index}`); }
-                completed++;
-                progress.style.width = `${(completed / urlList.length) * 100}%`;
-                status.innerText = `⚡ Descargando: ${completed}/${urlList.length}`;
-            };
-
             const queue = [...Array(urlList.length).keys()];
             const workers = new Array(Math.min(CONCURRENCY_LIMIT, urlList.length))
                 .fill(null)
                 .map(async () => {
                     while (queue.length > 0) {
-                        const index = queue.shift();
-                        await downloadTask(index);
+                        const i = queue.shift();
+                        try {
+                            const blob = await new Promise((res, rej) => {
+                                GM_xmlhttpRequest({
+                                    method: "GET", url: urlList[i], responseType: "blob",
+                                    headers: { "Referer": "https://www.kuaikanmanhua.com/" },
+                                    onload: r => res(r.response), onerror: rej
+                                });
+                            });
+                            blobs[i] = blob;
+                        } catch (e) { console.error(`Error en bloque ${i}`); }
+                        completed++;
+                        progress.style.width = `${(completed / urlList.length) * 100}%`;
+                        status.innerText = `⚡ Descargando: ${completed}/${urlList.length}`;
                     }
                 });
 
             await Promise.all(workers);
 
-            // --- FASE 3: STITCH & ZIP ---
-            status.innerText = "🧵 Uniendo fragmentos...";
-            const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
-            let currentGroup = [], currentH = 0, groupCount = 1;
+            status.innerText = "📏 Analizando dimensiones...";
+            const loadedImgs = [];
+            const widths = [];
 
             for (let i = 0; i < blobs.length; i++) {
                 if (!blobs[i]) continue;
                 const img = await new Promise((res) => {
                     const obj = new Image();
-                    obj.crossOrigin = "anonymous";
                     obj.onload = () => res(obj);
                     obj.src = URL.createObjectURL(blobs[i]);
                 });
-
-                if (currentH + img.height > hLimit && currentGroup.length > 0) {
-                    await stitch(zipWriter, currentGroup, currentH, groupCount++);
-                    currentGroup = []; currentH = 0;
-                }
-                currentGroup.push(img);
-                currentH += img.height;
+                loadedImgs.push(img);
+                widths.push(img.width);
             }
 
-            if (currentGroup.length > 0) await stitch(zipWriter, currentGroup, currentH, groupCount);
+            if (targetWidth <= 0) {
+                targetWidth = getMode(widths);
+                console.log(`Ancho detectado por mayoría: ${targetWidth}px`);
+            }
+
+            status.innerText = "🧵 Uniendo fragmentos...";
+            const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
+            let currentGroup = [], currentH = 0, groupCount = 1;
+
+            for (const img of loadedImgs) {
+                const ratio = targetWidth / img.width;
+                const finalH = Math.ceil(img.height * ratio);
+
+                if (currentH + finalH > hLimit && currentGroup.length > 0) {
+                    await stitch(zipWriter, currentGroup, currentH, groupCount++, targetWidth);
+                    currentGroup = []; currentH = 0;
+                }
+
+                currentGroup.push({ img, finalH });
+                currentH += finalH;
+            }
+
+            if (currentGroup.length > 0) await stitch(zipWriter, currentGroup, currentH, groupCount, targetWidth);
 
             status.innerText = "📦 Finalizando ZIP...";
             const finalZip = await zipWriter.close();
@@ -172,7 +203,7 @@
             a.href = URL.createObjectURL(finalZip);
             a.download = `${fileName}.zip`;
             a.click();
-            status.innerText = "✅ ¡Todo listo, EryxZar!";
+            status.innerText = "✅ ¡Todo listo!";
 
         } catch (e) {
             status.innerText = "❌ Error en el proceso.";
@@ -183,17 +214,23 @@
         }
     }
 
-    async function stitch(writer, imgs, totalH, idx) {
+    async function stitch(writer, group, totalH, idx, canvasW) {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
-        canvas.width = imgs[0].width;
+
+        canvas.width = canvasW;
         canvas.height = totalH;
+
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
         let y = 0;
-        for (const i of imgs) {
-            ctx.drawImage(i, 0, y);
-            y += i.height;
-            URL.revokeObjectURL(i.src);
+        for (const item of group) {
+            ctx.drawImage(item.img, 0, y, canvasW, item.finalH);
+            y += item.finalH;
+            URL.revokeObjectURL(item.img.src);
         }
+
         const b = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.9));
         await writer.add(`${String(idx).padStart(3, '0')}.jpg`, new zip.BlobReader(b));
     }
