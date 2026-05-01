@@ -11,7 +11,7 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 | :--- | :--- |
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal, |
 | **🇨🇳 Manhua** | Kuaikan |
-| **🇰🇷 Manhwa** | kakaoPageManhwa |
+| **🇰🇷 Manhwa** | Ridibook |
 | **📖 Novelas** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
