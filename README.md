@@ -53,7 +53,7 @@ This repository contains a collection of **UserScripts** optimized for the autom
 | :--- | :--- |
 | **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
 | **🇨🇳 Manhua** | Kuaikan |
-| **🇰🇷 Manhwa** | kakaoPageManhwa |
+| **🇰🇷 Manhwa** | Ridibook |
 | **📖 Novels** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
 
 ---
