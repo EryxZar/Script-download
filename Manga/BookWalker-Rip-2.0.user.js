@@ -1,8 +1,7 @@
 // ==UserScript==
 // @name         BookWalker-Rip
-// @namespace    HouseOfOtakus
-// @version      1.0
-// @description  Descargar y unir.
+// @version      2.0
+// @description  Descarga de capitulo
 // @author       EryxZar
 // @match        *://viewer-df.bookwalker.jp/*
 // @match        *://viewer.bookwalker.jp/*
@@ -50,10 +49,10 @@
         const panel = document.createElement('div');
         panel.id = 'ez-panel';
         panel.innerHTML = `
-            <h3>BookWalker-Rip</h3>
+            <h3>BookWalker-Rip V4.6.3</h3>
             <table>
                 <tr><td>Nombre ZIP:</td><td><input type="text" id="ez-filename" value="BookWalker_Cap"></td></tr>
-                <tr><td>Límite px:</td><td><input type="number" id="ez-h-limit" value="7000"></td></tr>
+                <tr><td>Límite px:</td><td><input type="number" id="ez-h-limit" value="8000"></td></tr>
             </table>
             <label class="stitch-row"><input type="checkbox" id="ez-do-stitch"><span>Unir imágenes (Stitch)</span></label>
             <div class="range-group">Desde: <input type="number" id="hoo-from" value="1"> Hasta: <input type="number" id="hoo-to" value="1"></div>
@@ -120,7 +119,7 @@
             menu.options.a6l.moveToPage(targetPageIndex);
 
             if (i === from) {
-                await new Promise(r => setTimeout(r, 400));
+                await new Promise(r => setTimeout(r, 800));
                 isResetting = false;
             }
 
@@ -129,14 +128,15 @@
                     let isL = false;
                     document.querySelectorAll('.loading').forEach(l => { if(l.offsetWidth > 0) isL = true; });
                     if (!isL) { clearInterval(check); resolve(); }
-                }, 150);
+                }, 200);
             });
 
+            // Espera reactiva: No salta hasta que detecta el cambio en extractedImages
             let waitTime = 0;
-            while (extractedImages.length === prevCount && waitTime < 3000) {
+            while (extractedImages.length === prevCount && waitTime < 4000) {
                 await new Promise(r => setTimeout(r, 200));
                 waitTime += 200;
-                if (waitTime === 1000) menu.options.a6l.moveToPage(targetPageIndex);
+                if (waitTime === 1500) menu.options.a6l.moveToPage(targetPageIndex);
             }
         }
         btn.innerText = "▶️ INICIAR RECORRIDO"; btn.style.background = "#00ffcc";
@@ -147,19 +147,24 @@
     // --- CAPTURA ---
     const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage = function() {
-        if (isDownloading || isResetting) return originalDrawImage.apply(this, arguments);
+        // NO BLOQUEAR 'Qk' AQUÍ: Es necesario para que el visor arme el puzzle.
 
         const img = arguments[0];
-        if (img && typeof img.src === 'string' && (img.src.includes('Qk') || (img.width < 100 && img.height < 100))) return;
-
         const canvas = this.canvas;
-        if (!canvas.closest('.currentScreen')) return originalDrawImage.apply(this, arguments);
+
+        // FILTRO DE VISIBILIDAD: Solo el canvas que el usuario está viendo realmente.
+        const isVisible = canvas.closest('.currentScreen') || (canvas.parentElement && canvas.parentElement.style.display !== 'none');
+
+        if (isDownloading || isResetting || !isVisible) return originalDrawImage.apply(this, arguments);
+
+        // Ignorar imágenes de sistema muy pequeñas (iconos, flechas)
+        if (img && img.width < 50 && img.height < 50) return originalDrawImage.apply(this, arguments);
 
         let dx = arguments[1], dy = arguments[2], dW = img.width, dH = img.height;
         if (arguments.length === 5) { dW = arguments[3]; dH = arguments[4]; }
         else if (arguments.length >= 9) { dx = arguments[5]; dy = arguments[6]; dW = arguments[7]; dH = arguments[8]; }
 
-        if (dW > 0 && dH > 0 && canvas.width > 500) {
+        if (dW > 0 && dH > 0 && canvas.width > 400) {
             let b = canvasBounds.get(canvas) || { minX: Infinity, minY: Infinity, maxX: 0, maxY: 0 };
             b.minX = Math.min(b.minX, dx); b.minY = Math.min(b.minY, dy);
             b.maxX = Math.max(b.maxX, dx + dW); b.maxY = Math.max(b.maxY, dy + dH);
@@ -177,15 +182,16 @@
 
                 const bounds = canvasBounds.get(canvas);
                 const cW = Math.ceil(bounds.maxX - bounds.minX), cH = Math.ceil(bounds.maxY - bounds.minY);
-                if (cW < 200 || cH < 200) return;
+                if (cW < 150 || cH < 150) return;
 
                 const crop = document.createElement('canvas');
                 crop.width = cW; crop.height = cH;
                 crop.getContext('2d').drawImage(canvas, Math.floor(bounds.minX), Math.floor(bounds.minY), cW, cH, 0, 0, cW, cH);
 
                 const save = (cv) => {
-                    const data = cv.toDataURL('image/jpeg', 0.95);
-                    if (data.length > 40000) {
+                    const data = cv.toDataURL('image/jpeg', 0.90);
+                    // Bajamos el umbral a 20KB para Tatesuku, ya que a veces las piezas son pequeñas.
+                    if (data.length > 20000) {
                         const hash = data.slice(-150);
                         if (!capturedHashes.has(hash)) {
                             capturedHashes.add(hash);
@@ -202,7 +208,7 @@
                     l.getContext('2d').drawImage(crop, 0, 0, hW, cH, 0, 0, hW, cH); save(l);
                 } else { save(crop); }
                 canvasBounds.delete(canvas);
-            }, 800));
+            }, 850));
         }
         return originalDrawImage.apply(this, arguments);
     };
@@ -212,7 +218,7 @@
         isDownloading = true;
         const status = document.getElementById('ez-status'), btn = document.getElementById('ez-start-btn');
         const isStitch = document.getElementById('ez-do-stitch').checked;
-        const hLimit = parseInt(document.getElementById('ez-h-limit').value) || 7000;
+        const hLimit = parseInt(document.getElementById('ez-h-limit').value) || 8000;
         btn.disabled = true; status.innerText = '⏳ Procesando ZIP...';
         try {
             const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
