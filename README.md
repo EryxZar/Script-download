@@ -9,7 +9,7 @@ Este repositorio contiene una colección de **UserScripts** optimizados para la 
 
 | Categoría | Plataformas |
 | :--- | :--- |
-| **🇯🇵 Manga** | Bookwalker, Renta, Young Animal, |
+| **🇯🇵 Manga** | Bookwalker, Renta, YoungAnimal, tonarinoyj|
 | **🇨🇳 Manhua** | Kuaikan |
 | **🇰🇷 Manhwa** | Ridibook, Kakao |
 | **📖 Novelas** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
@@ -51,7 +51,7 @@ This repository contains a collection of **UserScripts** optimized for the autom
 
 | Category | Platforms |
 | :--- | :--- |
-| **🇯🇵 Manga** | Bookwalker, Renta, Young Animal |
+| **🇯🇵 Manga** | Bookwalker, Renta, YoungAnimal, tonarinoyj |
 | **🇨🇳 Manhua** | Kuaikan |
 | **🇰🇷 Manhwa** | Ridibook, kakao |
 | **📖 Novels** | Munpia, Ridibook, Kakaobook, Syosetu, NaverBook |
