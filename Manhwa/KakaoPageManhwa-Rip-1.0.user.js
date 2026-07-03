@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KakaoPageManhwa-Rip
-// @version      1.0
-// @description  Descarga y unir.
+// @version      3.1
+// @description  Descarga rápida (x10) y unión de capítulos.
 // @author       EryxZar
 // @match        https://page.kakao.com/content/*/viewer/*
 // @icon         https://upload.wikimedia.org/wikipedia/commons/8/8f/Kakao_page_logo.png
@@ -9,6 +9,7 @@
 // @grant        GM_xmlhttpRequest
 // @connect      kakaocdn.net
 // @connect      kakao.com
+// @connect      page-edge.kakao.com
 // @run-at       document-start
 // ==/UserScript==
 
@@ -18,7 +19,6 @@
     let capturedChapterData = null;
     let isDownloading = false;
 
-    // --- CONFIGURACIÓN Y ESTILOS ---
     const style = document.createElement('style');
     style.innerHTML = `
         :root { --kakao-yellow: #FFCD00; --bg: #1a1a1a; --text: #efefef; --accent: #ffcd00; --border: #333; }
@@ -36,17 +36,25 @@
     `;
     document.head.appendChild(style);
 
-    // --- INTERCEPCIÓN DE DATOS (Lógica Kakao) ---
     function findKakaoImages(obj) {
         if (!obj || typeof obj !== 'object') return null;
         let searchObj = obj.data || obj;
-        if (searchObj?.viewerData?.imageDownloadData?.files) {
-            const files = searchObj.viewerData.imageDownloadData.files;
-            let title = searchObj?.viewerData?.title || document.title.split('-')[0].trim() || 'Kakao_Chapter';
+
+        // Soporte para la nueva API (viewer_data) y la antigua (viewerData)
+        const viewerNode = searchObj.viewer_data || searchObj.viewerData;
+
+        if (viewerNode?.imageDownloadData?.files) {
+            const files = viewerNode.imageDownloadData.files;
+
+            // El título ahora viene en searchObj.item.title en la nueva API
+            let rawTitle = searchObj?.item?.title || viewerNode?.title || document.title || 'Kakao_Chapter';
+            let title = rawTitle.replace(/\s*-\s*카카오페이지/g, '').trim();
+
             const images = files.map((f, i) => ({
                 url: f.secureUrl || f.url || f.imageUrl,
                 ord: f.no || f.order || f.sortOrder || (i + 1)
             })).filter(img => img.url).sort((a, b) => a.ord - b.ord);
+
             return { images, title };
         }
         return null;
@@ -59,10 +67,7 @@
                 if (this.responseText.includes('imageDownloadData')) {
                     const res = JSON.parse(this.responseText);
                     const found = findKakaoImages(res);
-                    if (found) {
-                        capturedChapterData = found;
-                        updateUI();
-                    }
+                    if (found) { capturedChapterData = found; updateUI(); }
                 }
             } catch (e) {}
         });
@@ -76,16 +81,12 @@
             const clone = response.clone();
             clone.json().then(data => {
                 const found = findKakaoImages(data);
-                if (found) {
-                    capturedChapterData = found;
-                    updateUI();
-                }
+                if (found) { capturedChapterData = found; updateUI(); }
             }).catch(() => {});
         } catch (e) {}
         return response;
     };
 
-    // --- PROCESAMIENTO DE IMÁGENES (Lógica Stitch/Toptoon) ---
     async function fetchImage(url, retries = 3) {
         for (let i = 0; i < retries; i++) {
             try {
@@ -115,16 +116,11 @@
         canvas.width = imgs[0].width;
         canvas.height = totalH;
         let y = 0;
-        for (const i of imgs) {
-            ctx.drawImage(i, 0, y);
-            y += i.height;
-            URL.revokeObjectURL(i.src);
-        }
+        for (const i of imgs) { ctx.drawImage(i, 0, y); y += i.height; URL.revokeObjectURL(i.src); }
         const mergedBlob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.90));
         await writer.add(`${String(count).padStart(3, '0')}.jpg`, new zip.BlobReader(mergedBlob));
     }
 
-    // --- UI Y FLUJO PRINCIPAL ---
     function createPanel() {
         if (document.getElementById('ez-panel')) return;
         const panel = document.createElement('div');
@@ -152,7 +148,7 @@
         if (capturedChapterData && !isDownloading) {
             const btn = document.getElementById('ez-start-btn');
             const input = document.getElementById('ez-filename');
-            btn.innerText = `🚀 Descargar (${capturedChapterData.images.length} caps)`;
+            btn.innerText = `🚀 Descargar (${capturedChapterData.images.length})`;
             btn.disabled = false;
             if (!input.value) input.value = capturedChapterData.title.replace(/[/\\?%*:|"<>]/g, '-');
             document.getElementById('ez-status').innerText = "Capítulo listo para descargar";
@@ -161,7 +157,6 @@
 
     async function startRip() {
         if (!capturedChapterData || isDownloading) return;
-
         const btn = document.getElementById('ez-start-btn');
         const status = document.getElementById('ez-status');
         const doStitch = document.getElementById('ez-do-stitch').checked;
@@ -173,14 +168,23 @@
 
         const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
         const { images } = capturedChapterData;
-
-        let currentGroup = [], currentH = 0, groupCount = 1;
+        const BATCH_SIZE = 10;
+        const downloadedBlobs = new Array(images.length);
 
         try {
-            for (let i = 0; i < images.length; i++) {
-                status.innerText = `📥 Descargando ${i + 1}/${images.length}...`;
-                const blob = await fetchImage(images[i].url);
+            for (let i = 0; i < images.length; i += BATCH_SIZE) {
+                const batch = [];
+                for (let j = i; j < i + BATCH_SIZE && j < images.length; j++) {
+                    batch.push(fetchImage(images[j].url).then(blob => ({ index: j, blob })));
+                }
+                status.innerText = `📥 Descargando grupo ${Math.floor(i/BATCH_SIZE) + 1}...`;
+                const results = await Promise.all(batch);
+                for (const res of results) downloadedBlobs[res.index] = res.blob;
+            }
 
+            let currentGroup = [], currentH = 0, groupCount = 1;
+            for (let i = 0; i < downloadedBlobs.length; i++) {
+                const blob = downloadedBlobs[i];
                 if (doStitch) {
                     const img = await blobToImg(blob);
                     if (currentH + img.height > hLimit && currentGroup.length > 0) {
@@ -188,17 +192,12 @@
                         await mergeAndAdd(zipWriter, currentGroup, currentH, groupCount++);
                         currentGroup = []; currentH = 0;
                     }
-                    currentGroup.push(img);
-                    currentH += img.height;
+                    currentGroup.push(img); currentH += img.height;
                 } else {
                     await zipWriter.add(`${String(i + 1).padStart(3, '0')}.jpg`, new zip.BlobReader(blob));
                 }
             }
-
-            if (currentGroup.length > 0) {
-                status.innerText = "🧵 Finalizando unión...";
-                await mergeAndAdd(zipWriter, currentGroup, currentH, groupCount);
-            }
+            if (currentGroup.length > 0) await mergeAndAdd(zipWriter, currentGroup, currentH, groupCount);
 
             status.innerText = "📦 Generando ZIP...";
             const finalZip = await zipWriter.close();
@@ -207,20 +206,17 @@
             link.download = `${fileName}.zip`;
             link.click();
             status.innerText = "✅ ¡Descarga Completa!";
-
         } catch (err) {
             console.error(err);
             status.innerText = "❌ Error en el proceso";
         } finally {
             isDownloading = false;
-            setTimeout(updateUI, 3000);
+            setTimeout(() => { if(!isDownloading) updateUI(); }, 3000);
         }
     }
 
-    // Inicialización
     window.addEventListener('load', createPanel);
 
-    // Observer para cambios de URL (SPA)
     let lastUrl = location.href;
     new MutationObserver(() => {
         if (location.href !== lastUrl) {
@@ -235,5 +231,4 @@
             }
         }
     }).observe(document, {subtree: true, childList: true});
-
 })();
