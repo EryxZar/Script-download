@@ -1,198 +1,249 @@
 // ==UserScript==
-// @name         Ridibook-Rip
-// @version      1.0
-// @description  Descarga capítulos.
+// @name         RidiManhwa-Rip
+// @version      2.0
+// @description  Detecta capítulos de pago y gratuitos
 // @author       EryxZar
 // @match        https://ridibooks.com/books/*
+// @match        https://library.ridibooks.com/*
+// @match        https://ridibooks.com/v2/viewer/*
 // @require      https://unpkg.com/@zip.js/zip.js@2.7.60/dist/zip-full.min.js
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      ridibooks.com
+// @connect      book-api.ridibooks.com
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // --- PROCESADOR ---
-    const limpiarTextoPro = (xhtml) => {
-        if (!xhtml) return "";
-        let texto = xhtml
-            .replace(/\r?\n|\r/g, " ")
-            .replace(/<\/p>/gi, "||BR||")
-            .replace(/<\/h[1-6]>/gi, "||BR||")
-            .replace(/<br\s*\/?>/gi, "||BR||")
-            .replace(/<\/div>/gi, "||BR||")
-            .replace(/<[^>]+>/g, "")
-            .replace(/&nbsp;/g, " ")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&amp;/g, "&")
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-            .replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u2060-\u206F\u202A-\u202E\uAD\u0000-\u001F\u007F-\u009F]/g, "")
-            .split("||BR||")
-            .map(linea => linea.trim())
-            .filter(linea => linea.length > 0)
-            .join("\n\n");
-        return texto.trim();
-    };
-
+    const CONCURRENCY_LIMIT = 10;
     const nombreSeguro = (name) => name.replace(/[<>:"/\\|?*]/g, '').trim();
 
-    async function generarEpubIndividual(tituloCap, xhtml) {
-        const epubWriter = new zip.ZipWriter(new zip.BlobWriter("application/epub+zip"));
-        await epubWriter.add("mimetype", new zip.TextReader("application/epub+zip"));
-        await epubWriter.add("META-INF/container.xml", new zip.TextReader(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`));
+    function escanearCapitulos() {
+        let chapters = [];
+        const isLibrary = window.location.hostname.includes('library.ridibooks.com');
 
-        const fileName = `content.xhtml`;
-        await epubWriter.add(`OEBPS/${fileName}`, new zip.TextReader(xhtml));
-
-        const opf = `<?xml version="1.0" encoding="utf-8"?>
-        <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="id" version="2.0">
-            <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-                <dc:title>${tituloCap}</dc:title>
-                <dc:creator>EryxZar</dc:creator>
-                <dc:language>ko</dc:language>
-            </metadata>
-            <manifest>
-                <item id="main" href="${fileName}" media-type="application/xhtml+xml"/>
-                <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-            </manifest>
-            <spine toc="ncx">
-                <itemref idref="main"/>
-            </spine>
-        </package>`;
-
-        const ncx = `<?xml version="1.0" encoding="UTF-8"?>
-        <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
-            <navMap>
-                <navPoint id="navPoint-1" playOrder="1">
-                    <navLabel><text>${tituloCap}</text></navLabel>
-                    <content src="${fileName}"/>
-                </navPoint>
-            </navMap>
-        </ncx>`;
-
-        await epubWriter.add("OEBPS/content.opf", new zip.TextReader(opf));
-        await epubWriter.add("OEBPS/toc.ncx", new zip.TextReader(ncx));
-        return await epubWriter.close();
+        if (isLibrary) {
+            const links = document.querySelectorAll('a[href*="/view"]');
+            links.forEach(link => {
+                const match = link.href.match(/books\/(\d+)\/view/);
+                if (match) {
+                    const capId = match[1];
+                    let tituloRaw = `Cap_${capId}`;
+                    const box = link.closest('.Book');
+                    if (box) {
+                        const titleEl = box.querySelector('p.css-1s2rrir') || box.querySelector('.LandscapeBook_Metadata p');
+                        if (titleEl && titleEl.innerText) tituloRaw = titleEl.innerText.trim();
+                    }
+                    if (!chapters.find(c => c.capId === capId)) {
+                        chapters.push({ capId: capId, tituloRaw: tituloRaw });
+                    }
+                }
+            });
+            chapters.reverse();
+        } else {
+            const items = document.querySelectorAll('li.js_series_book_list');
+            items.forEach((item) => {
+                const capId = item.getAttribute('data-id');
+                if (capId) {
+                    const titleEl = item.querySelector('.js_book_title');
+                    const tituloRaw = titleEl ? titleEl.innerText.trim() : `Cap_${capId}`;
+                    if (!chapters.find(c => c.capId === capId)) {
+                        chapters.push({ capId: capId, tituloRaw: tituloRaw });
+                    }
+                }
+            });
+        }
+        return { chapters, isLibrary };
     }
 
-    // --- 3. UI Y LÓGICA ---
-    if (window.location.href.includes('/books/')) {
-        setTimeout(() => {
-            let items = document.querySelectorAll('li.js_series_book_list');
-            const totalCaps = items.length;
-            if (document.getElementById('ho-master-panel') || totalCaps === 0) return;
+    setTimeout(() => {
+        if (document.getElementById('ho-mobile-wrapper')) return;
 
-            const style = document.createElement('style');
-            style.innerHTML = `
-                #ho-master-panel { position: fixed; top: 20px; right: 20px; z-index: 999999; width: 320px; padding: 25px; background: linear-gradient(145deg, #1a1a1a, #0d0d0d); color: #fff; font-family: 'Segoe UI', sans-serif; border-radius: 16px; border: 1px solid #2a2a2a; box-shadow: 0 15px 35px rgba(0,0,0,0.6); text-align: center; }
-                #ho-master-panel h3 { margin: 0 0 5px; color: #00e676; font-size: 22px; font-weight: 800; }
-                .author { font-size: 10px; color: #888; margin-bottom: 20px; letter-spacing: 3px; font-weight: bold; text-transform: uppercase; }
-                .ho-input-group { display: flex; justify-content: space-between; margin-bottom: 15px; }
-                .ho-input-group input { width: 45%; padding: 10px; background: #111; border: 1px solid #333; color: #fff; border-radius: 8px; text-align: center; }
-                .ho-checkboxes { display: flex; justify-content: space-around; margin-bottom: 15px; font-size: 13px; font-weight: bold; background: #111; padding: 8px; border-radius: 8px; }
-                #ho-btn { width: 100%; padding: 14px; background: #00e676; color: #000; font-weight: 900; border: none; border-radius: 8px; cursor: pointer; }
-                #ho-status { margin-top: 15px; font-size: 12px; color: #00e676; }
-                .ho-prog-bg { width: 100%; height: 6px; background: #222; border-radius: 3px; margin-top: 15px; overflow: hidden; display: none; }
-                .ho-prog-fill { height: 100%; background: #00e676; width: 0%; transition: 0.4s; }
-            `;
-            document.head.appendChild(style);
+        const isLibraryStart = window.location.hostname.includes('library.ridibooks.com');
+        let nombreSerieOriginal = "Manhwa_Ridibooks";
 
-            const ui = document.createElement('div');
-            ui.id = 'ho-master-panel';
-            ui.innerHTML = `
-                <h3>RIDIBOOK-RIP</h3>
+        if (isLibraryStart) {
+            const tituloLibreria = document.querySelector('h2.css-1p3q5vf') || document.querySelector('h2');
+            if (tituloLibreria && tituloLibreria.innerText) nombreSerieOriginal = tituloLibreria.innerText.trim();
+        } else {
+            nombreSerieOriginal = document.title.split(' - ')[0].trim() || "Manhwa_Ridibooks";
+        }
+
+        const style = document.createElement('style');
+        style.innerHTML = `
+            #ho-mobile-wrapper { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; align-items: flex-end; font-family: sans-serif; }
+            #ho-toggle-btn { width: 55px; height: 55px; border-radius: 50%; background: #00e676; color: #000; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.5); font-size: 24px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-top: 15px; transition: 0.3s; }
+            #ho-master-panel { width: 90vw; max-width: 340px; background: linear-gradient(145deg, #1a1a1a, #0d0d0d); color: #fff; border-radius: 16px; padding: 20px; border: 1px solid #2a2a2a; box-shadow: 0 15px 35px rgba(0,0,0,0.8); display: none; text-align: center; }
+            #ho-master-panel h3 { margin: 0 0 5px; color: #00e676; font-size: 20px; font-weight: 800; }
+            .author { font-size: 10px; color: #888; margin-bottom: 15px; letter-spacing: 2px; font-weight: bold; }
+            .ho-field { margin-bottom: 12px; font-size: 13px; text-align: left; }
+            .ho-field label { display: block; margin-bottom: 4px; color: #aaa; font-weight: bold; }
+            .ho-field input { width: 100%; padding: 10px; font-size: 14px; background: #111; border: 1px solid #333; color: #fff; border-radius: 6px; box-sizing: border-box; }
+            .ho-input-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
+            .ho-input-row .ho-field { flex: 1; margin-bottom: 0; }
+            .ho-alert { font-size: 11px; color: #00e676; margin-bottom: 10px; border: 1px solid #00e676; padding: 6px; border-radius: 6px; background: rgba(0,230,118,0.1); }
+            #ho-btn { width: 100%; padding: 14px; font-size: 15px; background: #00e676; color: #000; font-weight: 900; border: none; border-radius: 8px; cursor: pointer; margin-top: 5px; }
+            #ho-status { margin-top: 15px; font-size: 12px; color: #00e676; font-weight: 600; min-height: 15px;}
+            .ho-prog-bg { width: 100%; height: 8px; background: #222; border-radius: 4px; margin-top: 15px; overflow: hidden; display: none; }
+            .ho-prog-fill { height: 100%; background: #00e676; width: 0%; transition: 0.3s; }
+        `;
+        document.head.appendChild(style);
+
+        const wrapper = document.createElement('div');
+        wrapper.id = 'ho-mobile-wrapper';
+        wrapper.innerHTML = `
+            <div id="ho-master-panel">
+                <h3>Ridi-RIP</h3>
                 <div class="author">BY ERYXZAR</div>
-                <div class="ho-input-group">
-                    <input type="number" id="ho_start" value="1" min="1">
-                    <input type="number" id="ho_end" value="${totalCaps}">
+                <div id="ho-mode-alert" class="ho-alert">Cargando modo...</div>
+                <div style="font-size:12px; color:#aaa; margin-bottom:12px;" id="ho-cap-count">Capítulos detectados: 0</div>
+                <div class="ho-field"><label>Nombre del Archivo ZIP:</label><input type="text" id="ho_filename" value="${nombreSerieOriginal}"></div>
+                <div class="ho-input-row">
+                    <div class="ho-field"><label>Desde Cap:</label><input type="number" id="ho_start" value="1" min="1"></div>
+                    <div class="ho-field"><label>Hasta Cap:</label><input type="number" id="ho_end" value="1"></div>
                 </div>
-                <div class="ho-checkboxes">
-                    <label><input type="checkbox" id="ho_cb_txt" checked> .TXT</label>
-                    <label><input type="checkbox" id="ho_cb_epub" checked> .EPUB</label>
-                </div>
+                <div class="ho-field"><label>Límite de Alto (px):</label><input type="number" id="ho_h_limit" value="5000"></div>
                 <button id="ho-btn">DESCARGAR</button>
                 <div class="ho-prog-bg" id="ho-prog-bg"><div class="ho-prog-fill" id="ho-prog-fill"></div></div>
                 <div id="ho-status">Listo.</div>
-            `;
-            document.body.appendChild(ui);
+            </div>
+            <button id="ho-toggle-btn">⬇</button>
+        `;
+        document.body.appendChild(wrapper);
 
-            const btn = document.getElementById('ho-btn');
-            const status = document.getElementById('ho-status');
-            const progFill = document.querySelector('.ho-prog-fill');
+        const panel = document.getElementById('ho-master-panel');
+        const toggleBtn = document.getElementById('ho-toggle-btn');
+        const btn = document.getElementById('ho-btn');
+        const status = document.getElementById('ho-status');
+        const progFill = document.querySelector('.ho-prog-fill');
+        const capCountDisplay = document.getElementById('ho-cap-count');
+        const inputEnd = document.getElementById('ho_end');
 
-            btn.onclick = async () => {
-                const start = parseInt(document.getElementById('ho_start').value) - 1;
-                const end = parseInt(document.getElementById('ho_end').value);
-                const isTxt = document.getElementById('ho_cb_txt').checked;
-                const isEpub = document.getElementById('ho_cb_epub').checked;
+        let capitulosDetectados = [];
 
-                if (start < 0 || end > totalCaps || start >= end) return alert("Rango inválido.");
+        toggleBtn.onclick = () => {
+            if (panel.style.display === 'block') {
+                panel.style.display = 'none';
+                toggleBtn.innerHTML = '⬇';
+            } else {
+                panel.style.display = 'block';
+                toggleBtn.innerHTML = '✖';
+                const scan = escanearCapitulos();
+                capitulosDetectados = scan.chapters;
+                document.getElementById('ho-mode-alert').innerHTML = scan.isLibrary ? '✅ Modo Biblioteca Activo' : '✅ Modo Tienda Activo';
+                capCountDisplay.innerHTML = `Capítulos detectados: <b>${capitulosDetectados.length}</b>`;
+                inputEnd.value = capitulosDetectados.length > 0 ? capitulosDetectados.length : 1;
+            }
+        };
 
-                btn.disabled = true; btn.innerText = "PROCESANDO...";
-                document.getElementById('ho-prog-bg').style.display = "block";
+        btn.onclick = async () => {
+            const start = parseInt(document.getElementById('ho_start').value) - 1;
+            const end = parseInt(document.getElementById('ho_end').value);
+            const hLimit = parseInt(document.getElementById('ho_h_limit').value) || 5000;
+            const customFileName = document.getElementById('ho_filename').value.trim() || nombreSerieOriginal;
 
-                const selectedItems = Array.from(document.querySelectorAll('li.js_series_book_list')).slice(start, end);
-                const totalData = [];
-                const nombreSerie = document.title.split(' - ')[0].trim();
+            if (start < 0 || end > capitulosDetectados.length || start >= end) return alert("Rango inválido.");
 
-                try {
-                    for (let i = 0; i < selectedItems.length; i++) {
-                        const item = selectedItems[i];
-                        let capId = item.getAttribute('data-id') || item.querySelector('[data-book-id]')?.getAttribute('data-book-id');
-                        const tituloRaw = item.querySelector('.js_book_title')?.innerText.trim() || `Cap_${i+1}`;
+            btn.disabled = true;
+            document.getElementById('ho-prog-bg').style.display = "block";
 
-                        status.innerText = `Obteniendo: ${tituloRaw}`;
+            const selectedChapters = capitulosDetectados.slice(start, end);
+            const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
 
-                        if (capId) {
-                            const genResp = await fetch('https://ridibooks.com/api/web-viewer/generate', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ book_id: capId })
-                            });
-                            const genData = await genResp.json();
+            try {
+                for (let i = 0; i < selectedChapters.length; i++) {
+                    const cap = selectedChapters[i];
+                    let tituloRaw = cap.tituloRaw;
+                    btn.innerText = `PROCESANDO ${i+1}/${selectedChapters.length}...`;
 
-                            if (genData.success && genData.data.spines.length > 0) {
-                                const contentResp = await fetch(genData.data.spines[0]);
-                                const contentJson = await contentResp.json();
-                                if (contentJson.value) {
-                                    totalData.push({ titulo: nombreSeguro(tituloRaw), xhtml: contentJson.value });
+                    const genData = await new Promise((resolve, reject) => {
+                        GM_xmlhttpRequest({
+                            method: "POST",
+                            url: "https://ridibooks.com/api/web-viewer/generate",
+                            headers: { "Content-Type": "application/json" },
+                            data: JSON.stringify({ book_id: cap.capId }),
+                            onload: (res) => resolve(JSON.parse(res.responseText)),
+                            onerror: reject
+                        });
+                    });
+
+                    if (genData.success && genData.data.type === "comic" && genData.data.pages) {
+                        const pages = genData.data.pages;
+                        const carpetaCapitulo = nombreSeguro(tituloRaw);
+
+                        const blobUrls = new Array(pages.length);
+                        let completedDl = 0;
+                        const queue = [...Array(pages.length).keys()];
+                        const workers = new Array(Math.min(CONCURRENCY_LIMIT, pages.length)).fill(null).map(async () => {
+                            while (queue.length > 0) {
+                                const idx = queue.shift();
+                                try {
+                                    const imgResp = await fetch(pages[idx].src);
+                                    const imgBlob = await imgResp.blob();
+                                    blobUrls[idx] = URL.createObjectURL(imgBlob);
+                                } catch (e) { console.error(e); }
+                                completedDl++;
+                                status.innerText = `[${carpetaCapitulo}] Descargando: ${completedDl}/${pages.length} ⚡`;
+                            }
+                        });
+                        await Promise.all(workers);
+
+                        status.innerText = `[${carpetaCapitulo}] Renderizando cortes...`;
+                        const firstImg = await new Promise(r => { const o = new Image(); o.onload = () => r(o); o.src = blobUrls[0]; });
+                        const cWidth = firstImg.width;
+
+                        let canvas = document.createElement("canvas");
+                        canvas.width = cWidth;
+                        canvas.height = hLimit;
+                        let ctx = canvas.getContext("2d");
+
+                        let currentY = 0, groupCount = 1;
+
+                        for (let p = 0; p < blobUrls.length; p++) {
+                            const img = (p === 0) ? firstImg : await new Promise(r => { const o = new Image(); o.onload = () => r(o); o.src = blobUrls[p]; });
+                            let sY = 0, remH = img.height;
+
+                            while (remH > 0) {
+                                let space = hLimit - currentY;
+                                let dH = Math.min(remH, space);
+                                ctx.drawImage(img, 0, sY, img.width, dH, (cWidth - img.width) / 2, currentY, img.width, dH);
+                                currentY += dH; sY += dH; remH -= dH;
+
+                                if (currentY >= hLimit) {
+                                    const b = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.9));
+                                    await zipWriter.add(`${carpetaCapitulo}/${String(groupCount++).padStart(3, '0')}.jpg`, new zip.BlobReader(b));
+                                    ctx.clearRect(0, 0, cWidth, hLimit);
+                                    currentY = 0;
                                 }
                             }
+                            URL.revokeObjectURL(blobUrls[p]);
                         }
-                        progFill.style.width = `${((i + 1) / selectedItems.length) * 100}%`;
-                        await new Promise(r => setTimeout(r, 600));
+                        if (currentY > 0) {
+                            let fCanv = document.createElement("canvas");
+                            fCanv.width = cWidth; fCanv.height = currentY;
+                            fCanv.getContext("2d").drawImage(canvas, 0, 0);
+                            const b = await new Promise(r => fCanv.toBlob(r, "image/jpeg", 0.9));
+                            await zipWriter.add(`${carpetaCapitulo}/${String(groupCount).padStart(3, '0')}.jpg`, new zip.BlobReader(b));
+                        }
+                    } else {
+                        status.innerText = `[${tituloRaw}] Saltado (Sin acceso/No es manhwa)`;
+                        await new Promise(r => setTimeout(r, 800));
                     }
-
-                    status.innerText = "Generando archivos...";
-                    const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
-
-                    for (const cap of totalData) {
-                        if (isTxt) {
-                            const txtLimpio = limpiarTextoPro(cap.xhtml);
-                            await zipWriter.add(`TXT/${cap.titulo}.txt`, new zip.TextReader(txtLimpio));
-                        }
-
-                        if (isEpub) {
-                            const epubBlob = await generarEpubIndividual(cap.titulo, cap.xhtml);
-                            await zipWriter.add(`EPUB/${cap.titulo}.epub`, new zip.BlobReader(epubBlob));
-                        }
-                    }
-
-                    const finalZip = await zipWriter.close();
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(finalZip);
-                    a.download = `${nombreSerie}.zip`;
-                    a.click();
-
-                    status.innerText = "¡Descarga lista!";
-                    btn.disabled = false; btn.innerText = "DESCARGAR";
-                } catch (e) {
-                    console.error(e);
-                    status.innerText = "Error detectado.";
-                    btn.disabled = false;
+                    progFill.style.width = `${((i + 1) / selectedChapters.length) * 100}%`;
                 }
-            };
-        }, 2000);
-    }
+
+                const finalZip = await zipWriter.close();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(finalZip);
+                a.download = `${nombreSeguro(customFileName)}.zip`;
+                a.click();
+                status.innerText = "✅ ¡Listo!";
+            } catch (e) {
+                status.innerText = "❌ Error de red/acceso.";
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "DESCARGAR";
+            }
+        };
+    }, 1500);
 })();
