@@ -346,8 +346,8 @@ ${navPoints}  </navMap>
             const btn = document.getElementById('ho-btn');
             btn.disabled = true;
 
-            const CONCURRENCIA = 3; // máximo de capítulos descargándose a la vez
-            const MAX_INTENTOS = 3;
+            const CONCURRENCIA = 1; // máximo de capítulos descargándose a la vez
+            const MAX_INTENTOS = 1;
 
             let cola = listaDescarga.slice();       // capítulos pendientes por asignar
             let capturas = [];                       // [{n, titulo, texto}] (orden no garantizado, se ordena al final)
