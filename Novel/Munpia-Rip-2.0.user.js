@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         Munpia-Rip V4
+// @name         Munpia-Rip V5
 // @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  descargas con soporte TXT/EPUB y unión de capítulos
+// @version      5.0
+// @description  Nueva version.
 // @author       EryxZar
-// @match        *://novel.munpia.com/*
+// @match        https://www.munpia.com/novel/*/*
 // @run-at       document-start
 // @require      https://unpkg.com/@zip.js/zip.js@2.7.60/dist/zip-full.min.js
 // @grant        none
@@ -14,66 +14,171 @@
     'use strict';
 
     const esIframe = window.top !== window.self;
-    let textoCapturado = false;
 
-    // ======================================================
-    // 1. EL INTERCEPTOR AES (HOOK DE MEMORIA EN RAM)
-    // ======================================================
-    let hookCrypto = setInterval(() => {
-        if (window.CryptoJS && window.CryptoJS.AES && window.CryptoJS.AES.decrypt) {
-            clearInterval(hookCrypto);
-            const originalDecrypt = window.CryptoJS.AES.decrypt;
-
-            window.CryptoJS.AES.decrypt = function() {
-                const result = originalDecrypt.apply(this, arguments);
-                try {
-                    let textoBruto = result.toString(window.CryptoJS.enc.Utf8);
-
-                    if (textoBruto && textoBruto.length > 150 && !textoCapturado) {
-                        textoCapturado = true;
-
-                        let textoLimpio = textoBruto
-                            .replace(/<\/p>|<br\s*\/?>/gi, '\n')
-                            .replace(/<[^>]+>/g, '')
-                            .replace(/\n\s*\n/g, '\n\n')
-                            .trim();
-
-                        setTimeout(() => enviarDatos(textoLimpio), 100);
-                    }
-                } catch(e) {}
-                return result;
-            };
-        }
-    }, 1);
-
-    setTimeout(() => clearInterval(hookCrypto), 3000);
+    window.wasmDecryptedLines = [];
+    (function hookCanvas() {
+        const originalFillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function(text, x, y, maxWidth) {
+            if (text && typeof text === 'string') {
+                const trimmed = text.trim();
+                if (trimmed.length > 0 && !trimmed.startsWith('〈')) {
+                    window.wasmDecryptedLines.push({
+                        text: trimmed,
+                        x: x,
+                        y: y,
+                        font: this.font || ''
+                    });
+                }
+            }
+            return originalFillText.apply(this, arguments);
+        };
+    })();
 
     window.addEventListener('load', () => {
-        const esCapitulo = document.getElementById('viewerType') !== null;
+        const esCapitulo = window.location.pathname.includes('/novel/viewer/');
 
-        if (!esCapitulo && !window.location.href.includes('/neSrl/')) {
+        if (esCapitulo) {
+            iniciarExtraccionCapitulo();
+        } else if (!esIframe && !window.location.href.includes('/neSrl/')) {
             iniciarPanelMaestro();
         }
     });
 
-    function enviarDatos(texto) {
-        const h4Title = document.querySelector('h4 a');
-        let titulo = h4Title ? h4Title.innerText.trim() : "Capitulo";
+    let yaProcesado = false;
+    function iniciarExtraccionCapitulo() {
+        setTimeout(() => {
+            if (yaProcesado) return;
+            yaProcesado = true;
+            try {
+                const resultado = procesarLineasCanvas(window.wasmDecryptedLines || []);
+                if (!resultado || !resultado.texto) {
+                    console.warn('[EryxZar] Capitulo vacio o fallo en extraccion.');
+                    return;
+                }
+                enviarDatos(resultado.titulo, resultado.texto);
+            } catch (e) {
+                console.error('[EryxZar] Error procesando capitulo:', e);
+            }
+        }, 4000);
+    }
 
-        console.log(`[EryxZar] Extracción exitosa`);
+    function procesarLineasCanvas(rawItems) {
+        if (!rawItems || rawItems.length === 0) return null;
+
+        const cssRegex = /^(2d|top|left|right|bottom|middle|center|#(?:[0-9a-fA-F]{3}){1,2}|rgba?\(.*?\)|none|\d+(?:\.\d+)?px\s+.*?)$/i;
+        const encuestasRegex = /^(\d+대(\s*이상)?|\d{1,3})$/;
+
+        const filtered = rawItems.filter(it => {
+            const t = (it.text || '').trim();
+            if (!t) return false;
+            if (t.startsWith('http')) return false;
+            if (cssRegex.test(t)) return false;
+            if (encuestasRegex.test(t)) return false;
+            return true;
+        });
+
+        if (filtered.length === 0) return null;
+
+        const blocks = [];
+        let currentBlock = [];
+        let lastY = null;
+        for (const item of filtered) {
+            if (lastY !== null && item.y < lastY - 1.0) {
+                blocks.push(currentBlock);
+                currentBlock = [];
+            }
+            currentBlock.push(item);
+            lastY = item.y;
+        }
+        if (currentBlock.length) blocks.push(currentBlock);
+
+        const keptBlocks = [];
+        for (const b of blocks) {
+            const texts = b.map(it => it.text);
+            if (keptBlocks.length) {
+                const prevTexts = keptBlocks[keptBlocks.length - 1].map(it => it.text);
+                if (JSON.stringify(texts) === JSON.stringify(prevTexts)) continue;
+            }
+            keptBlocks.push(b);
+        }
+
+        const flatItems = [];
+        const blockStartIdx = new Set();
+        for (const b of keptBlocks) {
+            blockStartIdx.add(flatItems.length);
+            flatItems.push(...b);
+        }
+        if (flatItems.length === 0) return null;
+
+        const visualLines = [];
+        let curLine = [flatItems[0]];
+        let curIsBlockStart = blockStartIdx.has(0);
+        for (let i = 1; i < flatItems.length; i++) {
+            const it = flatItems[i];
+            const startsBlock = blockStartIdx.has(i);
+            if (!startsBlock && Math.abs(it.y - curLine[curLine.length - 1].y) < 2.0) {
+                curLine.push(it);
+            } else {
+                visualLines.push({ items: curLine, blockStart: curIsBlockStart });
+                curLine = [it];
+                curIsBlockStart = startsBlock;
+            }
+        }
+        visualLines.push({ items: curLine, blockStart: curIsBlockStart });
+
+        const lines = visualLines.map(vl => ({
+            x: vl.items[0].x,
+            y: vl.items[0].y,
+            text: vl.items.map(f => f.text).join(' '),
+            blockStart: vl.blockStart
+        }));
+
+        const CONTINUATION_X_THRESHOLD = 60.0;
+        const TIGHT_Y_THRESHOLD = 45.0;
+
+        const finalParagraphs = [lines[0].text];
+        let prevY = lines[0].y;
+        for (let i = 1; i < lines.length; i++) {
+            const ln = lines[i];
+            if (ln.x < CONTINUATION_X_THRESHOLD) {
+                finalParagraphs[finalParagraphs.length - 1] += ln.text;
+            } else if (ln.blockStart) {
+                finalParagraphs.push(ln.text);
+            } else {
+                const delta = ln.y - prevY;
+                if (delta > 0 && delta <= TIGHT_Y_THRESHOLD) {
+                    finalParagraphs[finalParagraphs.length - 1] += '\n' + ln.text;
+                } else {
+                    finalParagraphs.push(ln.text);
+                }
+            }
+            prevY = ln.y;
+        }
+
+        const textoFinal = finalParagraphs.join('\n\n');
+
+        const rawTitleEl = document.querySelector('[class*="_episodeTitle_"]');
+        const rawTitle = rawTitleEl ? rawTitleEl.innerText.trim() : '';
+        let chapterTitle = rawTitle ? rawTitle.replace(/^\d+\.\s*/, '').trim() : '';
+
+        if (!chapterTitle) {
+            const h4Title = document.querySelector('h4 a');
+            chapterTitle = h4Title ? h4Title.innerText.trim() : 'Capitulo';
+        }
+
+        return { titulo: chapterTitle, texto: textoFinal };
+    }
+
+    function enviarDatos(titulo, texto) {
+        console.log(`[EryxZar] Extraccion exitosa: ${titulo}`);
 
         if (esIframe) {
-            // Enviamos título y texto SEPARADOS (sin combinar) para que el
-            // panel maestro decida el formato (txt/epub) más adelante.
             window.parent.postMessage({ tipo: "HO_RIP_DATA", titulo, texto }, "*");
         } else {
             mostrarPanelIndividual(titulo, texto);
         }
     }
 
-    // ======================================================
-    // 2. UTILIDADES: XML/EPUB
-    // ======================================================
     function escaparXml(str) {
         return String(str)
             .replace(/&/g, '&amp;')
@@ -100,17 +205,12 @@
             .join('\n');
     }
 
-    // Genera un EPUB (Blob) a partir de un título de libro y una lista de
-    // capítulos [{titulo, texto}]. Sirve tanto para un solo capítulo como
-    // para varios capítulos unidos en un mismo libro.
     async function generarEpub(tituloLibro, capitulos) {
         const uuidLibro = generarUUID();
         const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/epub+zip"));
 
-        // 1. mimetype: debe ir primero y sin comprimir
         await zipWriter.add("mimetype", new zip.TextReader("application/epub+zip"), { level: 0 });
 
-        // 2. META-INF/container.xml
         const containerXml = `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
@@ -119,7 +219,6 @@
 </container>`;
         await zipWriter.add("META-INF/container.xml", new zip.TextReader(containerXml));
 
-        // 3. Capítulos xhtml
         let manifestItems = "";
         let spineItems = "";
         let navPoints = "";
@@ -128,7 +227,7 @@
             const idx = i + 1;
             const chapId = `chap${idx}`;
             const chapFile = `chap${idx}.xhtml`;
-            const tituloCap = escaparXml(cap.titulo || `Capítulo ${idx}`);
+            const tituloCap = escaparXml(cap.titulo || `Capitulo ${idx}`);
 
             manifestItems += `    <item id="${chapId}" href="${chapFile}" media-type="application/xhtml+xml"/>\n`;
             spineItems += `    <itemref idref="${chapId}"/>\n`;
@@ -138,11 +237,10 @@
   </navPoint>\n`;
         });
 
-        // 4. Añadir los xhtml al zip (segunda pasada, ya con el contenido armado arriba)
         for (let i = 0; i < capitulos.length; i++) {
             const idx = i + 1;
             const cap = capitulos[i];
-            const tituloCap = escaparXml(cap.titulo || `Capítulo ${idx}`);
+            const tituloCap = escaparXml(cap.titulo || `Capitulo ${idx}`);
             const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -155,7 +253,6 @@ ${textoAParrafosXhtml(cap.texto)}
             await zipWriter.add(`OEBPS/chap${idx}.xhtml`, new zip.TextReader(xhtml));
         }
 
-        // 5. content.opf
         const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -171,7 +268,6 @@ ${spineItems}  </spine>
 </package>`;
         await zipWriter.add("OEBPS/content.opf", new zip.TextReader(contentOpf));
 
-        // 6. toc.ncx
         const tocNcx = `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head><meta name="dtb:uid" content="urn:uuid:${uuidLibro}"/></head>
@@ -184,8 +280,6 @@ ${navPoints}  </navMap>
         return await zipWriter.close();
     }
 
-    // Crea un zip mixto: entradas = [{name, content}] donde content puede
-    // ser un string (texto plano) o un Blob (por ejemplo un epub ya armado).
     async function crearZipMixto(entradas, nombreZip) {
         const zipWriter = new zip.ZipWriter(new zip.BlobWriter("application/zip"));
         for (const e of entradas) {
@@ -207,9 +301,6 @@ ${navPoints}  </navMap>
         return String(str).replace(/[\\/:*?"<>|]/g, '');
     }
 
-    // ======================================================
-    // 3. PANEL INDIVIDUAL (un solo capítulo)
-    // ======================================================
     function mostrarPanelIndividual(titulo, texto) {
         if (document.getElementById('ho-single-panel')) return;
         const ui = document.createElement('div');
@@ -249,9 +340,6 @@ ${navPoints}  </navMap>
         };
     }
 
-    // ======================================================
-    // 4. PANEL MAESTRO (ANALIZADOR DE ÍNDICE + MULTI-DESCARGA)
-    // ======================================================
     function iniciarPanelMaestro() {
         if (document.getElementById('ho-master-panel') || esIframe) return;
 
@@ -259,7 +347,7 @@ ${navPoints}  </navMap>
         ui.id = 'ho-master-panel';
         ui.style = "position:fixed; top:20px; right:20px; z-index:999999; padding:20px; background:#121212; color:white; border-radius:12px; border:2px solid #00e676; width:300px; font-family:sans-serif; box-shadow:0 10px 30px rgba(0,0,0,0.8);";
         ui.innerHTML = `
-            <h3 style="margin:0 0 5px 0; color:#00e676; text-align:center;">🚀 Munpia-Rip V4.0</h3>
+            <h3 style="margin:0 0 5px 0; color:#00e676; text-align:center;">🚀 Munpia-Rip V5.0</h3>
             <p style="font-size:11px; color:#888; text-align:center; margin-bottom:10px;">AUTHOR: ERYXZAR</p>
             <p id="ho-contador" style="font-size:14px; color:#ffeb3b; text-align:center; margin-bottom:15px; font-weight:bold; display:none;"></p>
             <div id="ho-controles" style="display:none;">
@@ -271,50 +359,56 @@ ${navPoints}  </navMap>
                 </div>
                 <button id="ho-btn" style="width:100%; padding:12px; background:#00e676; color:black; font-weight:bold; border:none; border-radius:6px; cursor:pointer;">GENERAR</button>
             </div>
-            <div id="ho-st" style="margin-top:10px; font-size:12px; color:#00e676; text-align:center; min-height:20px;">🔍 Analizando índice...</div>
+            <div id="ho-st" style="margin-top:10px; font-size:12px; color:#00e676; text-align:center; min-height:20px;">🔍 Analizando indice...</div>
         `;
         document.body.appendChild(ui);
 
         const status = document.getElementById('ho-st');
-        const novelId = window.location.pathname.split('/')[1];
+
+        const novelIdMatch = window.location.pathname.match(/(?:novel\/detail\/|\/)(\d+)/);
+        const novelId = novelIdMatch ? novelIdMatch[1] : null;
+
         let todosLosCapitulos = [], capitulosSet = new Set();
 
         async function analizarIndiceCompleto() {
-            let pagina = 1, capituloUnoEncontrado = false;
-            while (!capituloUnoEncontrado) {
+            if (!novelId) {
+                status.innerText = "❌ No se pudo detectar el ID de la novela.";
+                return;
+            }
+
+            let pagina = 1;
+            while (true) {
                 try {
-                    status.innerText = `🔍 Escaneando página ${pagina}...`;
-                    let res = await fetch(`/${novelId}/page/${pagina}`);
+                    status.innerText = `🔍 Escaneando pagina ${pagina}...`;
+                    let res = await fetch(`https://www.munpia.com/api/v1/pc/novel-detail/${novelId}/chapters?order=ENTRY_OLD&page=${pagina}&size=100`);
                     if (!res.ok) break;
-                    let html = await res.text();
-                    let doc = new DOMParser().parseFromString(html, 'text/html');
-                    let filas = doc.querySelectorAll('table.entries tbody tr:not(.notice)');
+                    let json = await res.json();
+                    const lista = json && json.result && json.result.list;
+                    if (!lista || lista.length === 0) break;
 
-                    if (filas.length === 0) break;
-
-                    filas.forEach(f => {
-                        let textoNum = f.querySelector('td.index span')?.innerText;
-                        if (textoNum) {
-                            let n = parseInt(textoNum);
-                            let aTag = f.querySelector('td.subject a');
-                            if (aTag && aTag.href && !capitulosSet.has(n)) {
-                                todosLosCapitulos.push({ n, url: aTag.href });
-                                capitulosSet.add(n);
-                                if (n === 1) capituloUnoEncontrado = true;
-                            }
+                    lista.forEach(c => {
+                        if (!capitulosSet.has(c.num)) {
+                            todosLosCapitulos.push({
+                                n: c.num,
+                                url: `https://www.munpia.com/novel/viewer/${novelId}/${c.id}`,
+                                titulo: c.title
+                            });
+                            capitulosSet.add(c.num);
                         }
                     });
-                    if (capituloUnoEncontrado) break;
+
                     pagina++;
-                    if (pagina > 300) break;
-                } catch (e) { break; }
+                    if (pagina > 500) break;
+                } catch (e) {
+                    break;
+                }
             }
 
             todosLosCapitulos.sort((a, b) => a.n - b.n);
-            document.getElementById('ho-contador').innerText = `📚 Encontrados: ${todosLosCapitulos.length} capítulos`;
+            document.getElementById('ho-contador').innerText = `📚 Encontrados: ${todosLosCapitulos.length} capitulos`;
             document.getElementById('ho-contador').style.display = "block";
             document.getElementById('ho-controles').style.display = "block";
-            status.innerText = "✅ Listo.";
+            status.innerText = todosLosCapitulos.length ? "✅ Listo." : "❌ No se encontraron capitulos.";
         }
 
         analizarIndiceCompleto();
@@ -341,17 +435,18 @@ ${navPoints}  </navMap>
             });
 
             let listaDescarga = todosLosCapitulos.filter(cap => targetNums.has(cap.n));
-            if (listaDescarga.length === 0) return status.innerText = "❌ Rango no válido.";
+            if (listaDescarga.length === 0) return status.innerText = "❌ Rango no valido.";
 
             const btn = document.getElementById('ho-btn');
             btn.disabled = true;
 
-            const CONCURRENCIA = 1; // máximo de capítulos descargándose a la vez
-            const MAX_INTENTOS = 1;
+            const CONCURRENCIA = 3;
+            const MAX_INTENTOS = 3;
+            const TIMEOUT_POR_INTENTO = 11000;
 
-            let cola = listaDescarga.slice();       // capítulos pendientes por asignar
-            let capturas = [];                       // [{n, titulo, texto}] (orden no garantizado, se ordena al final)
-            let fallidos = [];                       // números de capítulo que no se pudieron capturar
+            let cola = listaDescarga.slice();
+            let capturas = [];
+            let fallidos = [];
             let bloqueadoPorCloudflare = false;
 
             const slots = [];
@@ -380,13 +475,13 @@ ${navPoints}  </navMap>
                            cuerpo.includes("verifying you are human") ||
                            !!doc.querySelector('#cf-wrapper, .cf-turnstile, #challenge-form');
                 } catch (e) {
-                    return false; // si no podemos leerlo, no asumimos nada
+                    return false;
                 }
             }
 
             function detenerTodoPorCloudflare(numCap) {
                 bloqueadoPorCloudflare = true;
-                status.innerText = `🛡️ Cloudflare está bloqueando (Cap ${numCap}). Espera unos minutos y reintenta con un rango más chico.`;
+                status.innerText = `🛡️ Cloudflare esta bloqueando (Cap ${numCap}). Espera unos minutos y reintenta con un rango mas chico.`;
                 window.removeEventListener("message", onMsg);
                 slots.forEach(s => clearTimeout(s.timeoutId));
                 btn.disabled = false;
@@ -396,8 +491,6 @@ ${navPoints}  </navMap>
                 const cap = slot.cap;
                 actualizarStatus();
 
-                // Pequeño escalonamiento incluso entre los 3 concurrentes,
-                // para no disparar las 3 peticiones exactamente al mismo tiempo.
                 const espera = 300 + Math.random() * 600;
 
                 slot.iframe.src = "about:blank";
@@ -417,13 +510,13 @@ ${navPoints}  </navMap>
 
                     slot.intentos++;
                     if (slot.intentos >= MAX_INTENTOS) {
-                        console.warn(`[EryxZar] Capítulo ${cap.n} falló tras ${MAX_INTENTOS} intentos, saltando.`);
+                        console.warn(`[EryxZar] Capitulo ${cap.n} fallo tras ${MAX_INTENTOS} intentos, saltando.`);
                         fallidos.push(cap.n);
                         asignarSiguiente(slot);
                     } else {
                         cargarEnSlot(slot);
                     }
-                }, 7000);
+                }, TIMEOUT_POR_INTENTO);
             }
 
             function asignarSiguiente(slot) {
@@ -460,13 +553,10 @@ ${navPoints}  </navMap>
                 window.removeEventListener("message", onMsg);
                 status.innerText = "📦 Generando archivos...";
 
-                // Reordenamos por número de capítulo: al ser concurrente,
-                // pueden haber llegado en cualquier orden.
                 capturas.sort((a, b) => a.n - b.n);
 
                 try {
                     if (quiereUnir) {
-                        // ---- MODO UNIDO: un solo libro/archivo ----
                         if (quiereTxt && quiereEpub) {
                             const txtCombinado = capturas.map(c => `${c.titulo}\n\n${c.texto}`).join('\n\n\n');
                             const epubBlob = await generarEpub(val, capturas);
@@ -483,7 +573,6 @@ ${navPoints}  </navMap>
                             descargarBlob(epubBlob, `${val}.epub`);
                         }
                     } else {
-                        // ---- MODO SEPARADO: un archivo por capítulo ----
                         if (quiereTxt && quiereEpub) {
                             let entradas = [];
                             for (const c of capturas) {
@@ -506,7 +595,7 @@ ${navPoints}  </navMap>
                     }
                     status.innerText = fallidos.length
                         ? `⚠️ Listo, pero fallaron: ${fallidos.join(', ')}`
-                        : "✅ ¡Éxito Masivo!";
+                        : "✅ ¡Exito Masivo!";
                 } catch (err) {
                     console.error(err);
                     status.innerText = "❌ Error generando archivos.";
