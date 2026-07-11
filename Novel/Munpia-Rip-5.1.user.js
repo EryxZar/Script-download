@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Munpia-Rip V5
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      5.1
 // @description  Nueva version.
 // @author       EryxZar
 // @match        https://www.munpia.com/novel/*/*
@@ -45,21 +45,121 @@
     });
 
     let yaProcesado = false;
-    function iniciarExtraccionCapitulo() {
-        setTimeout(() => {
-            if (yaProcesado) return;
-            yaProcesado = true;
-            try {
-                const resultado = procesarLineasCanvas(window.wasmDecryptedLines || []);
-                if (!resultado || !resultado.texto) {
-                    console.warn('[EryxZar] Capitulo vacio o fallo en extraccion.');
-                    return;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // ====================================================
+    // FIX V5.1 (Author: EryxZar): misma logica que se aplico en la
+    // version Python. Antes se esperaba un fijo de 4000ms a ciegas
+    // asumiendo que el capitulo entero ya habia renderizado sin
+    // necesidad de avanzar de pagina/scroll. Eso dejaba capitulos
+    // largos (paginados con _pageOverlayBtn_ o de scroll continuo con
+    // _scrollContainer_) incompletos siempre que superaran esos 4s.
+    // Ahora se hace scroll/click activo, cada 50ms, y se corta con un
+    // "periodo de gracia" de 800ms: apenas se detecta que ya no hay
+    // mas para avanzar (boton deshabilitado, scroll al fondo, o
+    // aparicion del nav de fin de capitulo _episodeNav_) se espera un
+    // poco mas por si el canvas todavia esta terminando de pintar; si
+    // en ese lapso sigue entrando texto nuevo, se reinicia la espera.
+    // ====================================================
+    function avanzarPagina() {
+        const btns = document.querySelectorAll('[class*="_pageOverlayBtn_"]');
+        let clicked = false;
+        let atLastPage = false;
+        const episodeNav = document.querySelector('[class*="_episodeNav_"]');
+
+        if (btns.length >= 2) {
+            const btnDerecho = btns[btns.length - 1];
+            if (btnDerecho) {
+                if (btnDerecho.disabled) {
+                    atLastPage = true;
+                } else {
+                    btnDerecho.click();
+                    clicked = true;
                 }
-                enviarDatos(resultado.titulo, resultado.texto);
-            } catch (e) {
-                console.error('[EryxZar] Error procesando capitulo:', e);
             }
-        }, 4000);
+        } else {
+            const scrollDiv = document.querySelector('[class*="_scrollContainer_"]');
+            if (scrollDiv) {
+                const atBottom = (scrollDiv.scrollTop + scrollDiv.clientHeight) >= (scrollDiv.scrollHeight - 2);
+                if (atBottom) {
+                    atLastPage = true;
+                } else {
+                    scrollDiv.scrollBy(0, 1200);
+                    clicked = true;
+                }
+            }
+        }
+
+        return { clicked, atLastPage, episodeNavPresent: !!episodeNav };
+    }
+
+    async function iniciarExtraccionCapitulo() {
+        // Espera inicial para que el primer render del canvas ya haya
+        // arrancado antes de empezar a scrollear/clickear.
+        await sleep(1200);
+
+        const POLL_INTERVAL = 50;   // 50ms entre chequeos
+        const GRACE_PERIOD = 800;   // colchon tras "parece que ya termino"
+        const MAX_TOTAL = 18000;    // tope duro, con margen bajo el timeout
+                                     // de 23s del panel maestro (ver abajo)
+        let lastLen = -1;
+        let elapsed = 0;
+        let graceDeadline = null;
+
+        while (elapsed < MAX_TOTAL) {
+            if (yaProcesado) return; // por si ya nos mato el timeout del panel maestro
+
+            let navResult;
+            try {
+                navResult = avanzarPagina();
+            } catch (e) {
+                break;
+            }
+
+            await sleep(POLL_INTERVAL);
+            elapsed += POLL_INTERVAL;
+
+            const currentLen = (window.wasmDecryptedLines || []).length;
+            const grew = currentLen !== lastLen;
+            lastLen = currentLen;
+
+            const noMoreToAdvance = navResult.atLastPage || navResult.episodeNavPresent || !navResult.clicked;
+
+            if (noMoreToAdvance) {
+                if (graceDeadline === null || grew) {
+                    // Recien se detecto el posible final, o siguio
+                    // entrando texto nuevo durante el periodo de gracia:
+                    // todavia esta renderizando, se reinicia el colchon.
+                    graceDeadline = elapsed + GRACE_PERIOD;
+                } else if (elapsed >= graceDeadline) {
+                    // Se cumplio el periodo de gracia sin que entrara
+                    // nada nuevo: ahi si se termino de verdad.
+                    break;
+                }
+            } else {
+                graceDeadline = null;
+            }
+        }
+
+        finalizarExtraccion();
+    }
+
+    function finalizarExtraccion() {
+        if (yaProcesado) return;
+        yaProcesado = true;
+        try {
+            const resultado = procesarLineasCanvas(window.wasmDecryptedLines || []);
+            if (!resultado || !resultado.texto) {
+                console.warn('[EryxZar] Capitulo vacio o fallo en extraccion.');
+                return;
+            }
+            enviarDatos(resultado.titulo, resultado.texto);
+        } catch (e) {
+            console.error('[EryxZar] Error procesando capitulo:', e);
+        }
     }
 
     function procesarLineasCanvas(rawItems) {
@@ -442,7 +542,13 @@ ${navPoints}  </navMap>
 
             const CONCURRENCIA = 3;
             const MAX_INTENTOS = 3;
-            const TIMEOUT_POR_INTENTO = 11000;
+            // FIX: subido de 11000 a 23000. La extraccion por capitulo ahora
+            // hace scroll/click activo con un tope duro de 18000ms mas
+            // 1200ms de espera inicial (ver iniciarExtraccionCapitulo). Con
+            // los 11000ms viejos, el panel maestro mataba el iframe antes de
+            // que terminara de scrollear un capitulo largo y lo reintentaba
+            // sin necesidad (o lo daba por fallido).
+            const TIMEOUT_POR_INTENTO = 23000;
 
             let cola = listaDescarga.slice();
             let capturas = [];
