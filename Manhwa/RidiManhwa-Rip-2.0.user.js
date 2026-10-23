@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RidiManhwa-Rip
-// @version      2.2
-// @description  Detecta capítulos de pago y gratuitos (Soporte Tienda Nueva, Clásica y Biblioteca) y carga todos con "더보기"
+// @version      2.4
+// @description  Descargar multiples capitulos
 // @author       EryxZar
 // @match        https://ridibooks.com/books/*
 // @match        https://library.ridibooks.com/*
@@ -19,6 +19,9 @@
     const nombreSeguro = (name) => name.replace(/[<>:"/\\|?*]/g, '').trim();
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    // ─────────────────────────────────────────────
+    // Pulsa "더보기" hasta que ya no queden capítulos por cargar
+    // ─────────────────────────────────────────────
     async function cargarTodosLosCapitulos(onProgress) {
         const SEL_ITEMS = '#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li, li.js_series_book_list';
         const contar = () => document.querySelectorAll(SEL_ITEMS).length;
@@ -70,7 +73,7 @@
                         const titleEl = box.querySelector('p.css-1s2rrir') || box.querySelector('.LandscapeBook_Metadata p');
                         if (titleEl && titleEl.innerText) tituloRaw = titleEl.innerText.trim();
                     }
-                    if (!chapters.find(c => c.capId === capId)) {
+                    if (!chapters.some(c => c.capId === capId)) {
                         chapters.push({ capId: capId, tituloRaw: tituloRaw });
                     }
                 }
@@ -83,7 +86,7 @@
                 if (capId) {
                     const titleEl = item.querySelector('.js_book_title');
                     const tituloRaw = titleEl ? titleEl.innerText.trim() : `Cap_${capId}`;
-                    if (!chapters.find(c => c.capId === capId)) {
+                    if (!chapters.some(c => c.capId === capId)) {
                         chapters.push({ capId: capId, tituloRaw: tituloRaw });
                     }
                 }
@@ -91,35 +94,27 @@
 
             if (chapters.length === 0) {
                 const newItems = document.querySelectorAll('#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li');
+
                 newItems.forEach((item, idx) => {
-                    let capId = null;
-
                     const img = item.querySelector('img[src*="/thumbnail/"], img[srcset*="/thumbnail/"]');
-                    if (img) {
-                        const srcStr = img.getAttribute('src') || img.getAttribute('srcset') || '';
-                        const matchImg = srcStr.match(/\/thumbnail\/(\d+)\//);
-                        if (matchImg) capId = matchImg[1];
-                    }
+                    if (!img) return;
 
-                    if (!capId) {
-                        const link = item.querySelector('a[href*="/books/"]');
-                        if (link) {
-                            const matchLink = link.getAttribute('href').match(/\/books\/(\d+)/);
-                            if (matchLink) capId = matchLink[1];
-                        }
-                    }
+                    let capId = null;
+                    const srcStr = img.getAttribute('src') || img.getAttribute('srcset') || '';
+                    const matchImg = srcStr.match(/\/thumbnail\/(\d+)\//);
+                    if (matchImg) capId = matchImg[1];
 
                     if (capId) {
-                        let tituloRaw = img?.getAttribute('alt')?.trim();
+                        let tituloRaw = img.getAttribute('alt')?.trim();
                         if (!tituloRaw) {
-                            const labelSpan = item.querySelector('label span:last-child');
+                            const labelSpan = item.querySelector('span[class*="1hyfx7x"], label span:last-child');
                             if (labelSpan) {
                                 tituloRaw = labelSpan.innerText.replace(/\s*선택$/, '').trim();
                             }
                         }
                         if (!tituloRaw) tituloRaw = `Cap_${idx + 1}`;
 
-                        if (!chapters.find(c => c.capId === capId)) {
+                        if (!chapters.some(c => c.capId === capId)) {
                             chapters.push({ capId: capId, tituloRaw: tituloRaw });
                         }
                     }
@@ -220,7 +215,7 @@
                 document.getElementById('ho-mode-alert').innerHTML = '⏳ Cargando todos los capítulos...';
                 try {
                     await cargarTodosLosCapitulos(n => {
-                        capCountDisplay.innerHTML = `Cargando... <b>${n}</b> elementos`;
+                        capCountDisplay.innerHTML = `Cargando DOM... <b>${n}</b> elementos`;
                     });
                 } catch (e) {
                     console.error('Error cargando capítulos:', e);
