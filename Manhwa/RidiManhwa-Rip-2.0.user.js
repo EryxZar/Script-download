@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RidiManhwa-Rip
-// @version      2.0
-// @description  Detecta capítulos de pago y gratuitos
+// @version      2.2
+// @description  Detecta capítulos de pago y gratuitos (Soporte Tienda Nueva, Clásica y Biblioteca) y carga todos con "더보기"
 // @author       EryxZar
 // @match        https://ridibooks.com/books/*
 // @match        https://library.ridibooks.com/*
@@ -17,7 +17,43 @@
 
     const CONCURRENCY_LIMIT = 10;
     const nombreSeguro = (name) => name.replace(/[<>:"/\\|?*]/g, '').trim();
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    async function cargarTodosLosCapitulos(onProgress) {
+        const SEL_ITEMS = '#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li, li.js_series_book_list';
+        const contar = () => document.querySelectorAll(SEL_ITEMS).length;
+
+        const buscarBoton = () => {
+            const root = document.getElementById('SLOT__EpisodeBookList') || document;
+            return [...root.querySelectorAll('button')].find(b =>
+                b.innerText.replace(/\s+/g, '').includes('더보기') && !b.disabled && b.offsetParent !== null
+            );
+        };
+
+        let sinCambios = 0;
+        while (sinCambios < 3) {
+            const boton = buscarBoton();
+            if (!boton) break;
+
+            const antes = contar();
+            boton.scrollIntoView({ block: 'center' });
+            boton.click();
+
+            let intentos = 0;
+            while (contar() === antes && intentos < 40) {
+                await sleep(150);
+                intentos++;
+            }
+
+            sinCambios = (contar() === antes) ? sinCambios + 1 : 0;
+            if (onProgress) onProgress(contar());
+        }
+        return contar();
+    }
+
+    // ─────────────────────────────────────────────
+    // Escaneo de capítulos
+    // ─────────────────────────────────────────────
     function escanearCapitulos() {
         let chapters = [];
         const isLibrary = window.location.hostname.includes('library.ridibooks.com');
@@ -41,9 +77,9 @@
             });
             chapters.reverse();
         } else {
-            const items = document.querySelectorAll('li.js_series_book_list');
-            items.forEach((item) => {
-                const capId = item.getAttribute('data-id');
+            const classicItems = document.querySelectorAll('li.js_series_book_list');
+            classicItems.forEach((item) => {
+                const capId = item.getAttribute('data-id') || item.querySelector('[data-book-id]')?.getAttribute('data-book-id');
                 if (capId) {
                     const titleEl = item.querySelector('.js_book_title');
                     const tituloRaw = titleEl ? titleEl.innerText.trim() : `Cap_${capId}`;
@@ -52,6 +88,47 @@
                     }
                 }
             });
+
+            if (chapters.length === 0) {
+                const newItems = document.querySelectorAll('#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li');
+                newItems.forEach((item, idx) => {
+                    let capId = null;
+
+                    const img = item.querySelector('img[src*="/thumbnail/"], img[srcset*="/thumbnail/"]');
+                    if (img) {
+                        const srcStr = img.getAttribute('src') || img.getAttribute('srcset') || '';
+                        const matchImg = srcStr.match(/\/thumbnail\/(\d+)\//);
+                        if (matchImg) capId = matchImg[1];
+                    }
+
+                    if (!capId) {
+                        const link = item.querySelector('a[href*="/books/"]');
+                        if (link) {
+                            const matchLink = link.getAttribute('href').match(/\/books\/(\d+)/);
+                            if (matchLink) capId = matchLink[1];
+                        }
+                    }
+
+                    if (capId) {
+                        let tituloRaw = img?.getAttribute('alt')?.trim();
+                        if (!tituloRaw) {
+                            const labelSpan = item.querySelector('label span:last-child');
+                            if (labelSpan) {
+                                tituloRaw = labelSpan.innerText.replace(/\s*선택$/, '').trim();
+                            }
+                        }
+                        if (!tituloRaw) tituloRaw = `Cap_${idx + 1}`;
+
+                        if (!chapters.find(c => c.capId === capId)) {
+                            chapters.push({ capId: capId, tituloRaw: tituloRaw });
+                        }
+                    }
+                });
+            }
+
+            if (chapters.length > 1 && Number(chapters[0].capId) > Number(chapters[chapters.length - 1].capId)) {
+                chapters.reverse();
+            }
         }
         return { chapters, isLibrary };
     }
@@ -66,7 +143,8 @@
             const tituloLibreria = document.querySelector('h2.css-1p3q5vf') || document.querySelector('h2');
             if (tituloLibreria && tituloLibreria.innerText) nombreSerieOriginal = tituloLibreria.innerText.trim();
         } else {
-            nombreSerieOriginal = document.title.split(' - ')[0].trim() || "Manhwa_Ridibooks";
+            const h1Title = document.querySelector('h1');
+            nombreSerieOriginal = (h1Title && h1Title.innerText) ? h1Title.innerText.trim() : (document.title.split(' - ')[0].trim() || "Manhwa_Ridibooks");
         }
 
         const style = document.createElement('style');
@@ -83,6 +161,7 @@
             .ho-input-row .ho-field { flex: 1; margin-bottom: 0; }
             .ho-alert { font-size: 11px; color: #00e676; margin-bottom: 10px; border: 1px solid #00e676; padding: 6px; border-radius: 6px; background: rgba(0,230,118,0.1); }
             #ho-btn { width: 100%; padding: 14px; font-size: 15px; background: #00e676; color: #000; font-weight: 900; border: none; border-radius: 8px; cursor: pointer; margin-top: 5px; }
+            #ho-btn:disabled { opacity: 0.5; cursor: not-allowed; }
             #ho-status { margin-top: 15px; font-size: 12px; color: #00e676; font-weight: 600; min-height: 15px;}
             .ho-prog-bg { width: 100%; height: 8px; background: #222; border-radius: 4px; margin-top: 15px; overflow: hidden; display: none; }
             .ho-prog-fill { height: 100%; background: #00e676; width: 0%; transition: 0.3s; }
@@ -120,20 +199,42 @@
         const inputEnd = document.getElementById('ho_end');
 
         let capitulosDetectados = [];
+        let cargando = false;
 
-        toggleBtn.onclick = () => {
+        toggleBtn.onclick = async () => {
             if (panel.style.display === 'block') {
                 panel.style.display = 'none';
                 toggleBtn.innerHTML = '⬇';
-            } else {
-                panel.style.display = 'block';
-                toggleBtn.innerHTML = '✖';
-                const scan = escanearCapitulos();
-                capitulosDetectados = scan.chapters;
-                document.getElementById('ho-mode-alert').innerHTML = scan.isLibrary ? '✅ Modo Biblioteca Activo' : '✅ Modo Tienda Activo';
-                capCountDisplay.innerHTML = `Capítulos detectados: <b>${capitulosDetectados.length}</b>`;
-                inputEnd.value = capitulosDetectados.length > 0 ? capitulosDetectados.length : 1;
+                return;
             }
+
+            panel.style.display = 'block';
+            toggleBtn.innerHTML = '✖';
+
+            if (cargando) return;
+            cargando = true;
+
+            const isLib = window.location.hostname.includes('library.ridibooks.com');
+            if (!isLib) {
+                btn.disabled = true;
+                document.getElementById('ho-mode-alert').innerHTML = '⏳ Cargando todos los capítulos...';
+                try {
+                    await cargarTodosLosCapitulos(n => {
+                        capCountDisplay.innerHTML = `Cargando... <b>${n}</b> elementos`;
+                    });
+                } catch (e) {
+                    console.error('Error cargando capítulos:', e);
+                }
+                btn.disabled = false;
+            }
+
+            const scan = escanearCapitulos();
+            capitulosDetectados = scan.chapters;
+            document.getElementById('ho-mode-alert').innerHTML = scan.isLibrary ? '✅ Modo Biblioteca Activo' : '✅ Modo Tienda Activo';
+            capCountDisplay.innerHTML = `Capítulos detectados: <b>${capitulosDetectados.length}</b>`;
+            inputEnd.value = capitulosDetectados.length > 0 ? capitulosDetectados.length : 1;
+
+            cargando = false;
         };
 
         btn.onclick = async () => {
@@ -200,6 +301,7 @@
                         let currentY = 0, groupCount = 1;
 
                         for (let p = 0; p < blobUrls.length; p++) {
+                            if (!blobUrls[p]) continue;
                             const img = (p === 0) ? firstImg : await new Promise(r => { const o = new Image(); o.onload = () => r(o); o.src = blobUrls[p]; });
                             let sY = 0, remH = img.height;
 
