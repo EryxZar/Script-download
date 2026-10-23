@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         RidiManhwa-Rip
-// @version      2.4
-// @description  Descargar multiples capitulos
+// @version      2.5
+// @description  Detecta capítulos y carga todos usando "더보기" y botones de capítulos anteriores (aria-label)
 // @author       EryxZar
 // @match        https://ridibooks.com/books/*
 // @match        https://library.ridibooks.com/*
@@ -20,7 +20,7 @@
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
     // ─────────────────────────────────────────────
-    // Pulsa "더보기" hasta que ya no queden capítulos por cargar
+    // Pulsa botones de carga (tanto "더보기" como "이전 회차 더보기") hasta que no queden más
     // ─────────────────────────────────────────────
     async function cargarTodosLosCapitulos(onProgress) {
         const SEL_ITEMS = '#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li, li.js_series_book_list';
@@ -28,9 +28,14 @@
 
         const buscarBoton = () => {
             const root = document.getElementById('SLOT__EpisodeBookList') || document;
-            return [...root.querySelectorAll('button')].find(b =>
-                b.innerText.replace(/\s+/g, '').includes('더보기') && !b.disabled && b.offsetParent !== null
-            );
+            const botones = [...root.querySelectorAll('button')];
+
+            // Buscar por texto "더보기" o por el atributo aria-label específico de capítulos anteriores
+            return botones.find(b => {
+                const texto = b.innerText.replace(/\s+/g, '');
+                const aria = b.getAttribute('aria-label') || '';
+                return (texto.includes('더보기') || aria.includes('이전 회차 더보기')) && !b.disabled && b.offsetParent !== null;
+            });
         };
 
         let sinCambios = 0;
@@ -55,7 +60,7 @@
     }
 
     // ─────────────────────────────────────────────
-    // Escaneo de capítulos
+    // Escaneo de capítulos (Optimizado y libre de duplicados)
     // ─────────────────────────────────────────────
     function escanearCapitulos() {
         let chapters = [];
@@ -80,6 +85,7 @@
             });
             chapters.reverse();
         } else {
+            // 1. Modo Tienda Clásica
             const classicItems = document.querySelectorAll('li.js_series_book_list');
             classicItems.forEach((item) => {
                 const capId = item.getAttribute('data-id') || item.querySelector('[data-book-id]')?.getAttribute('data-book-id');
@@ -92,6 +98,7 @@
                 }
             });
 
+            // 2. Modo Tienda Nueva Next.js
             if (chapters.length === 0) {
                 const newItems = document.querySelectorAll('#SLOT__EpisodeBookList ol > li, ol[class*="book-detail-direct-"] > li');
 
